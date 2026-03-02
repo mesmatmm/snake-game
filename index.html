@@ -137,6 +137,30 @@
     .controls span {
       color: #555;
     }
+
+    #mute-btn {
+      margin-top: 14px;
+      background: transparent;
+      border: 1px solid #222;
+      color: #444;
+      padding: 6px 14px;
+      font-size: 0.7rem;
+      letter-spacing: 2px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    #mute-btn:hover {
+      border-color: #555;
+      color: #888;
+      background: transparent;
+    }
+
+    #mute-btn.muted {
+      color: #333;
+      border-color: #1a1a1a;
+    }
   </style>
 </head>
 <body>
@@ -167,6 +191,7 @@
   <div class="controls">
     <span>Arrow Keys / WASD</span> &nbsp;&middot;&nbsp; <span>P to Pause</span>
   </div>
+  <button id="mute-btn">&#128266; Sound On</button>
 
 <script>
   const canvas = document.getElementById('canvas');
@@ -175,6 +200,62 @@
   const startBtn = document.getElementById('start-btn');
   const scoreEl = document.getElementById('score');
   const bestEl = document.getElementById('best-score');
+  const muteBtn = document.getElementById('mute-btn');
+
+  // --- Audio Engine (Web Audio API, no external files) ---
+  let audioCtx = null;
+  let muted = false;
+
+  function getAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  function playTone({ freq = 440, endFreq, type = 'sine', gain = 0.3, duration = 0.12, delay = 0 } = {}) {
+    if (muted) return;
+    const ac = getAudio();
+    const t = ac.currentTime + delay;
+    const osc = ac.createOscillator();
+    const env = ac.createGain();
+    osc.connect(env);
+    env.connect(ac.destination);
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (endFreq !== undefined) osc.frequency.exponentialRampToValueAtTime(endFreq, t + duration);
+    env.gain.setValueAtTime(gain, t);
+    env.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    osc.start(t);
+    osc.stop(t + duration + 0.01);
+  }
+
+  const sfx = {
+    eat() {
+      // Two-tone ascending pop — pitch rises with score for feedback
+      const base = 440 + Math.min(score, 20) * 20;
+      playTone({ freq: base,        endFreq: base * 1.5, type: 'sine',     gain: 0.25, duration: 0.08 });
+      playTone({ freq: base * 1.5,  endFreq: base * 2,   type: 'triangle', gain: 0.15, duration: 0.07, delay: 0.07 });
+    },
+    start() {
+      // Cheerful ascending 3-note jingle: C5 → E5 → G5
+      [523, 659, 784].forEach((f, i) => {
+        playTone({ freq: f, endFreq: f * 1.05, type: 'triangle', gain: 0.2, duration: 0.1, delay: i * 0.1 });
+      });
+    },
+    die() {
+      // Descending buzz then low thud
+      playTone({ freq: 320, endFreq: 80,  type: 'sawtooth', gain: 0.3, duration: 0.35 });
+      playTone({ freq: 100, endFreq: 40,  type: 'sine',     gain: 0.4, duration: 0.4,  delay: 0.25 });
+    },
+  };
+
+  muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    muteBtn.textContent = muted ? '🔇 Sound Off' : '🔊 Sound On';
+    muteBtn.classList.toggle('muted', muted);
+    // Resume AudioContext if it was suspended (browser autoplay policy)
+    if (!muted && audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  });
+  // -----------------------------------------------------------
 
   const GRID = 20;
   const COLS = canvas.width / GRID;
@@ -244,6 +325,7 @@
         bestEl.textContent = bestScore;
         localStorage.setItem('snakeBest', bestScore);
       }
+      sfx.eat();
       spawnFood();
     } else {
       snake.pop();
@@ -355,12 +437,14 @@
     paused = false;
     overlay.style.display = 'none';
     lastStep = 0;
+    sfx.start();
     loopId = requestAnimationFrame(gameLoop);
   }
 
   function gameOver() {
     running = false;
     cancelAnimationFrame(loopId);
+    sfx.die();
 
     overlay.className = 'gameover';
     overlay.innerHTML = `
